@@ -319,7 +319,16 @@ def extract_table(
             continue
         values = [grid[r][c] if c < len(grid[r]) else None for c in table_cols]
 
-        if r in merged_comment_rows:
+        # A wide merged banner normally reads as a title to strip. But when the
+        # caller asked for a multi-row header, a banner among the first
+        # `header_rows` rows is part of that header, not a comment sitting above
+        # it — pull banners out only once the header region is filled. (For the
+        # default single-row header, a leading banner still strips, so the real
+        # header below it is found.)
+        strip_merged = r in merged_comment_rows and not (
+            header_rows > 1 and len(header) < header_rows
+        )
+        if strip_merged:
             anchor = merged_comment_rows[r]
             if anchor not in seen_merge_anchors:
                 seen_merge_anchors.add(anchor)

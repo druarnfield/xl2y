@@ -51,6 +51,34 @@ def test_multi_row_header(tmp_path):
     assert ex.df.columns == ["Store", "Revenue Q1", "Revenue Q2"]
 
 
+def test_merged_banner_kept_inside_multi_row_header(tmp_path):
+    # A wide merged banner in the top row is stripped as a title under the
+    # default single-row header, but when the caller asks for a multi-row
+    # header it belongs to that header — it must not be pulled out as a
+    # comment and shift the header down onto a data row.
+    from openpyxl import Workbook
+
+    p = tmp_path / "banner.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "All Data"
+    ws["A1"] = "FY25/26 Tracker"
+    ws.merge_cells("A1:D1")  # 1: full-width banner
+    ws.append(["Region", "Q1", "Q2", "Q3"])  # 2: header
+    ws.append([None, "gbp", "gbp", "gbp"])  # 3: units sub-header
+    ws.append(["Alpha", 1, 2, 3])  # 4: data
+    ws.append(["Beta", 4, 5, 6])  # 5: data
+    wb.save(p)
+
+    ex = extract.extract_table(reader.read_sheet(p, "All Data"), header_rows=3)
+    # The banner stays in the header, so data begins at Excel row 4 (not 5)
+    # and the banner is not recorded as a comment.
+    assert ex.excel_rows == [4, 5]
+    assert ex.df.height == 2
+    assert not [c for c in ex.comments if c["kind"] == "merged"]
+    assert ex.df.columns[0] == "FY25/26 Tracker Region"
+
+
 def test_hidden_skipped_when_asked(tmp_path):
     ex = _extracted(
         tmp_path, fixtures.hidden_book, "Hidden", skip_hidden=True
