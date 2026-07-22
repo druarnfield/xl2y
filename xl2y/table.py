@@ -91,3 +91,60 @@ class Table:
         return self._step(
             "cast", self.df.with_columns(exprs), self.excel_rows, types=recorded
         )
+
+
+class TableSet:
+    """An ordered collection of :class:`Table`, keyed by original sheet name.
+
+    Verbs map over every member and return a new ``TableSet`` so a whole
+    workbook flows through one pipeline: ``load_all(p).clean().to_parquet(d)``.
+    """
+
+    def __init__(self, tables: dict[str, Table]):
+        self._tables: dict[str, Table] = dict(tables)
+
+    def __iter__(self):
+        return iter(self._tables)
+
+    def __getitem__(self, key: str) -> Table:
+        return self._tables[key]
+
+    def __len__(self) -> int:
+        return len(self._tables)
+
+    def __repr__(self) -> str:
+        return f"TableSet({list(self._tables)!r})"
+
+    def items(self):
+        return self._tables.items()
+
+    def keys(self):
+        return self._tables.keys()
+
+    def values(self):
+        return self._tables.values()
+
+    def _map(self, verb: str, *a: Any, **k: Any) -> "TableSet":
+        return TableSet(
+            {key: getattr(t, verb)(*a, **k) for key, t in self._tables.items()}
+        )
+
+    def clean(self, *a: Any, **k: Any) -> "TableSet":
+        return self._map("clean", *a, **k)
+
+    def kitchen_sink(self, *a: Any, **k: Any) -> "TableSet":
+        return self._map("kitchen_sink", *a, **k)
+
+    def cast(self, *a: Any, **k: Any) -> "TableSet":
+        return self._map("cast", *a, **k)
+
+    def apply(self, *a: Any, **k: Any) -> "TableSet":
+        return self._map("apply", *a, **k)
+
+    def conform(self, *a: Any, **k: Any) -> "TableSet":
+        return self._map("conform", *a, **k)
+
+    def dry_run(self, *a: Any, **k: Any) -> "TableSet":
+        for t in self._tables.values():
+            t.dry_run(*a, **k)
+        return self
