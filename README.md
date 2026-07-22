@@ -5,7 +5,7 @@ One job, done well — with a tiny, intuitive verb set that stays simple in the
 easy case and flexible when you need it.
 
 ```bash
-uv add xl2y   # depends only on polars + openpyxl
+uv add git+github.com/druarnfield/xl2y   # depends only on polars + openpyxl
 ```
 
 ## The two ends of the spectrum
