@@ -7,7 +7,9 @@ a pipeline is just a reusable function ``lambda t: t.clean().cast(...)`` and
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Callable
 
 import polars as pl
@@ -185,6 +187,28 @@ class Table:
 
         return self._step("clean", df, excel_rows, **detail)
 
+    def to_parquet(
+        self, path: str | Path, overwrite: bool = False
+    ) -> Path:
+        """Write the table to Parquet with the full source/lineage/comments
+        embedded as JSON in the schema metadata (key ``xl2y``), so the file
+        stays self-describing."""
+        path = Path(path)
+        if path.exists() and not overwrite:
+            raise FileExistsError(
+                f"{path} already exists (pass overwrite=True to replace)."
+            )
+        payload = json.dumps(
+            {
+                "source": self.source,
+                "lineage": self.lineage,
+                "comments": self.comments,
+            },
+            default=str,
+        )
+        self.df.write_parquet(path, metadata={"xl2y": payload})
+        return path
+
     def apply(self, fn: Callable[[pl.DataFrame], pl.DataFrame]) -> "Table":
         """Run an arbitrary ``df -> df`` callable as a pipeline step.
 
@@ -277,3 +301,24 @@ class TableSet:
         for t in self._tables.values():
             t.dry_run(*a, **k)
         return self
+
+    def to_parquet(
+        self, out_dir: str | Path, overwrite: bool = False
+    ) -> dict[str, dict]:
+        """Write one Parquet file per member into ``out_dir`` (filenames are
+        snake_cased sheet names) and return a manifest keyed the same way."""
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        manifest: dict[str, dict] = {}
+        for name, t in self._tables.items():
+            key = unique_name(snake_case(name), set(manifest))
+            target = out_dir / f"{key}.parquet"
+            t.to_parquet(target, overwrite=overwrite)
+            manifest[key] = {
+                "parquet_path": str(target),
+                "sheet_name": t.source.get("sheet", name),
+                "rows": t.df.height,
+                "columns": list(t.df.columns),
+                "comments": t.comments,
+            }
+        return manifest
