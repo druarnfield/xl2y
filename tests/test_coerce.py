@@ -58,3 +58,28 @@ def test_events_reported():
     )
     assert events[0]["event"] == "coerced_numeric"
     assert events[0]["failed"] == 1
+
+
+def test_nested_parens_not_fabricated():
+    # "((500))" is malformed; must NOT become a number (matches prototype).
+    out, _ = coerce.coerce_columns(
+        _col(["((500))", "(500))", "x", "y", "z"]), dayfirst=True
+    )
+    assert out["x"].dtype == pl.Utf8  # too few parse -> stays text
+
+
+def test_single_paren_still_negative():
+    out, _ = coerce.coerce_columns(_col(["(500)", "(1,000)", "5"]), dayfirst=True)
+    assert out["x"].to_list() == [-500, -1000, 5]
+
+
+def test_iso_slash_and_month_word_dates():
+    out, _ = coerce.coerce_columns(
+        _col(["2025/03/04", "2025/03/05", "2025/03/06"]), dayfirst=True
+    )
+    assert out["x"].dtype == pl.Date
+    out2, _ = coerce.coerce_columns(
+        _col(["3-Apr-2025", "4-Apr-2025", "5-Apr-2025"]), dayfirst=True
+    )
+    assert out2["x"].dtype == pl.Date
+    assert out2["x"][0].month == 4

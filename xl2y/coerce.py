@@ -48,16 +48,26 @@ _DATE_FORMATS_DAYFIRST = [
     "%d.%m.%Y",
     "%d/%m/%y",
     "%Y-%m-%d",
+    "%Y/%m/%d",
     "%d %b %Y",
     "%d %B %Y",
+    "%d-%b-%Y",
+    "%d-%B-%Y",
+    "%b %d, %Y",
+    "%B %d, %Y",
 ]
 _DATE_FORMATS_MONTHFIRST = [
     "%m/%d/%Y",
     "%m-%d-%Y",
     "%m/%d/%y",
     "%Y-%m-%d",
+    "%Y/%m/%d",
     "%b %d %Y",
     "%B %d %Y",
+    "%b %d, %Y",
+    "%B %d, %Y",
+    "%d-%b-%Y",
+    "%d-%B-%Y",
 ]
 _DATEY = (
     r"(?i)[-/:.]|\d\s+\w|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec"
@@ -70,9 +80,11 @@ def numberish(col: str) -> pl.Expr:
     leading minus both mean negative; a trailing percent divides by 100."""
     s = pl.col(col).str.strip_chars()
     paren = s.str.contains(r"^\(.*\)$")
+    # Remove exactly ONE paren from each end (not str.strip_chars("()"), which
+    # peels all of them and would turn "((500))" into a spurious number).
     core = (
         pl.when(paren)
-        .then(s.str.strip_chars("()"))
+        .then(s.str.replace(r"^\(", "").str.replace(r"\)$", ""))
         .otherwise(s)
         .str.strip_chars()
     )
