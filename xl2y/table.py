@@ -8,6 +8,7 @@ a pipeline is just a reusable function ``lambda t: t.clean().cast(...)`` and
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +17,8 @@ import polars as pl
 
 from xl2y.coerce import coerce_columns
 from xl2y.util import snake_case, unique_name
+
+logger = logging.getLogger(__name__)
 
 # String aliases accepted by cast() and mapped to polars dtypes. The schema
 # module's ColumnType objects reuse these same names via their .kind.
@@ -217,6 +220,27 @@ class Table:
         )
         self.df.write_parquet(path, metadata={"xl2y": payload})
         return path
+
+    def kitchen_sink(self) -> "Table":
+        """The "don't make me think" verb: try several interpretations of the
+        source sheet and keep the one that looks most like a competent table
+        (see :mod:`xl2y.sink`). Falls back to :meth:`clean` if the source grid
+        is unavailable (e.g. after :meth:`apply` broke the link)."""
+        if self._raw is None:
+            logger.warning(
+                "kitchen_sink: no source grid available; using clean()."
+            )
+            return self.clean()
+        from xl2y.sink import run_tournament
+
+        best_ex, best_clean, entry = run_tournament(self._raw, self.source)
+        return replace(
+            self,
+            df=best_clean.df,
+            excel_rows=best_ex.excel_rows,
+            comments=best_ex.comments,
+            lineage=[*self.lineage, entry],
+        )
 
     def conform(self, schema: Any, on_error: str = "raise") -> "Table":
         """Cast columns to match ``schema`` then validate. By default raises a
