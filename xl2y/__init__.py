@@ -78,7 +78,8 @@ def load(path: str | Path, sheet: str | None = None, **hints: Any) -> Table:
 
     ``hints`` forward to :func:`xl2y.extract.extract_table` (``header_rows``,
     ``sparse_rows``, ``skip_hidden``, ``check_formula_cache``,
-    ``header_min_fill``); ``dayfirst`` is stored for later coercion.
+    ``header_min_fill``, ``header_at``, ``columns``); ``dayfirst`` is stored
+    for later coercion.
     """
     dayfirst = hints.pop("dayfirst", True)
     path = Path(path)

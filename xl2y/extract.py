@@ -77,6 +77,30 @@ def _unique_name(base: str, taken: set[str]) -> str:
     return name
 
 
+def _col_letter_to_index(letters: str) -> int:
+    """Excel column letters -> 0-indexed column ("A" -> 0, "AA" -> 26)."""
+    s = letters.strip().upper()
+    if not s or not s.isalpha():
+        raise ValueError(f"invalid column letter {letters!r}")
+    n = 0
+    for ch in s:
+        n = n * 26 + (ord(ch) - ord("A") + 1)
+    return n - 1
+
+
+def _parse_col_range(spec: str) -> tuple[int, int]:
+    """Parse an Excel column range ("A:X") or single column ("C") into an
+    inclusive 0-indexed (left, right) pair."""
+    parts = spec.split(":")
+    if len(parts) == 1:
+        lo = hi = _col_letter_to_index(parts[0])
+    elif len(parts) == 2:
+        lo, hi = _col_letter_to_index(parts[0]), _col_letter_to_index(parts[1])
+    else:
+        raise ValueError(f"columns must be like 'A:X' or 'C', got {spec!r}")
+    return (lo, hi) if lo <= hi else (hi, lo)
+
+
 def build_columns(header: list[list[Any]], width: int) -> list[str]:
     """Join multi-row header parts with spaces; keep original text.
 
@@ -153,6 +177,8 @@ def extract_table(
     skip_hidden: bool = False,
     check_formula_cache: bool = True,
     header_min_fill: float = 0.0,
+    header_at: int | None = None,
+    columns: str | None = None,
 ) -> Extracted:
     """Shape a :class:`RawSheet` grid into a table.
 
@@ -163,11 +189,20 @@ def extract_table(
     previous behaviour: the first non-empty, non-title row anchors the header.
     Only the *first* header row is tested; stacked sub-header rows below it may
     be as sparse as the data needs.
+
+    ``header_at`` (1-indexed Excel row) is the last-resort override: everything
+    above it is ignored and the header starts there, bypassing the heuristics
+    that guess where the header is. ``columns`` (an Excel letter range like
+    ``"A:X"``, or a single ``"C"``) forces the column span instead of
+    auto-detecting the widest populated block.
     """
     if not 0.0 <= header_min_fill <= 1.0:
         raise ValueError(
             f"header_min_fill must be between 0 and 1, got {header_min_fill!r}"
         )
+    if header_at is not None and header_at < 1:
+        raise ValueError(f"header_at must be a 1-indexed row >= 1, got {header_at!r}")
+    override_cols = _parse_col_range(columns) if columns is not None else None
     title = raw.name
     # Work on a copy: merge propagation below fills and pads cells, and
     # kitchen_sink re-extracts the same RawSheet under different options.
@@ -244,6 +279,25 @@ def extract_table(
     data_rows = [r for r, has in row_has.items() if has]
     if not data_rows:
         raise EmptySheetError(f"Sheet {title!r} has no data")
+
+    if header_at is not None:
+        floor = header_at - 1  # 1-indexed Excel row -> 0-indexed grid row
+        ignored = [r for r in data_rows if r < floor]
+        data_rows = [r for r in data_rows if r >= floor]
+        if not data_rows:
+            raise EmptySheetError(
+                f"Sheet {title!r}: header_at={header_at} is past the last row "
+                "with data."
+            )
+        if ignored:
+            logger.info(
+                "Sheet %r: header_at=%d, ignoring %d row(s) above it.",
+                title,
+                header_at,
+                len(ignored),
+            )
+        events.append({"event": "header_at", "excel_row": header_at})
+
     top, bottom = data_rows[0], data_rows[-1]
 
     n_cols = max(len(grid[r]) for r in data_rows)
@@ -257,30 +311,51 @@ def extract_table(
         )
         for c in range(n_cols)
     ]
-    runs: list[tuple[int, int]] = []  # (start, end) inclusive, non-empty cols
-    start = None
-    for c, count in enumerate(col_counts + [0]):
-        if count and start is None:
-            start = c
-        elif not count and start is not None:
-            runs.append((start, c - 1))
-            start = None
-    left, right = max(
-        runs, key=lambda run: sum(col_counts[run[0] : run[1] + 1])
-    )
-    table_cols = [c for c in range(left, right + 1) if c not in hidden_cols]
-    width = len(table_cols)
-    if len(runs) > 1:
+    if override_cols is not None:
+        left, right = override_cols
+        if left >= n_cols:
+            raise ValueError(
+                f"Sheet {title!r}: columns={columns!r} starts past the sheet's "
+                f"{n_cols} populated column(s)."
+            )
+        right = min(right, n_cols - 1)  # don't manufacture empty trailing cols
+        table_cols = [c for c in range(left, right + 1) if c not in hidden_cols]
+        width = len(table_cols)
         logger.info(
-            "Sheet %r: multiple column blocks found; using columns %d-%d as "
-            "the table and ignoring the rest.",
+            "Sheet %r: using caller-specified columns %s (%d-%d).",
             title,
+            columns,
             left + 1,
             right + 1,
         )
         events.append(
-            {"event": "columns_ignored", "used": (left + 1, right + 1)}
+            {"event": "columns_override", "spec": columns, "used": (left + 1, right + 1)}
         )
+    else:
+        runs: list[tuple[int, int]] = []  # (start, end) inclusive, non-empty
+        start = None
+        for c, count in enumerate(col_counts + [0]):
+            if count and start is None:
+                start = c
+            elif not count and start is not None:
+                runs.append((start, c - 1))
+                start = None
+        left, right = max(
+            runs, key=lambda run: sum(col_counts[run[0] : run[1] + 1])
+        )
+        table_cols = [c for c in range(left, right + 1) if c not in hidden_cols]
+        width = len(table_cols)
+        if len(runs) > 1:
+            logger.info(
+                "Sheet %r: multiple column blocks found; using columns %d-%d "
+                "as the table and ignoring the rest.",
+                title,
+                left + 1,
+                right + 1,
+            )
+            events.append(
+                {"event": "columns_ignored", "used": (left + 1, right + 1)}
+            )
 
     # ------------------------------------------------------------------ #
     # 3. Merged-comment detection.

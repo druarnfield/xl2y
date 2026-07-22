@@ -58,6 +58,10 @@ def _describe_event(ev: dict) -> str:
         return f"skipped {ev['rows']} hidden row(s), {ev['cols']} hidden col(s)"
     if kind == "columns_ignored":
         return f"used columns {ev['used']}, ignored other block(s)"
+    if kind == "columns_override":
+        return f"forced columns {ev['spec']} ({ev['used']})"
+    if kind == "header_at":
+        return f"header pinned to Excel row {ev['excel_row']}"
     if kind == "uncached_formulas":
         return f"{ev['count']} uncached formula cell(s) read as null"
     return str(ev)

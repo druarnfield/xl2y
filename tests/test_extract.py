@@ -129,6 +129,59 @@ def test_header_min_fill_out_of_range(tmp_path):
         extract.extract_table(raw, header_min_fill=1.5)
 
 
+def _override_book(tmp_path):
+    from openpyxl import Workbook
+
+    p = tmp_path / "ov.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "All Data"
+    ws.append(["Company XYZ", None, None, None, "sidebar"])  # 1
+    ws.append(["Generated 2026", None, None, None, "note"])  # 2
+    ws.append([None, None, None, None, None])  # 3 blank
+    ws.append(["Region", "Q1", "Q2", "Q3", "misc"])  # 4 header
+    ws.append(["Alpha", 1, 2, 3, "x"])  # 5
+    ws.append(["Beta", 4, 5, 6, "y"])  # 6
+    wb.save(p)
+    return reader.read_sheet(p, "All Data")
+
+
+def test_header_at_pins_the_header_row(tmp_path):
+    raw = _override_book(tmp_path)
+    ex = extract.extract_table(raw, header_at=4)
+    assert ex.df.columns == ["Region", "Q1", "Q2", "Q3", "misc"]
+    assert ex.excel_rows == [5, 6]
+    assert any(e["event"] == "header_at" for e in ex.events)
+
+
+def test_header_at_past_data_raises(tmp_path):
+    raw = _override_book(tmp_path)
+    with pytest.raises(EmptySheetError):
+        extract.extract_table(raw, header_at=99)
+
+
+def test_columns_override_forces_span(tmp_path):
+    raw = _override_book(tmp_path)
+    ex = extract.extract_table(raw, header_at=4, columns="A:D")
+    assert ex.df.columns == ["Region", "Q1", "Q2", "Q3"]  # sidebar dropped
+    ex = extract.extract_table(raw, header_at=4, columns="B:C")
+    assert ex.df.columns == ["Q1", "Q2"]
+
+
+def test_columns_override_clamped_to_extent(tmp_path):
+    # An over-wide range is trimmed to the sheet's populated width rather than
+    # manufacturing empty trailing columns.
+    raw = _override_book(tmp_path)
+    ex = extract.extract_table(raw, header_at=4, columns="A:ZZ")
+    assert ex.df.width == 5
+
+
+def test_columns_override_bad_spec(tmp_path):
+    raw = _override_book(tmp_path)
+    with pytest.raises(ValueError, match="column"):
+        extract.extract_table(raw, columns="A:B:C")
+
+
 def test_hidden_skipped_when_asked(tmp_path):
     ex = _extracted(
         tmp_path, fixtures.hidden_book, "Hidden", skip_hidden=True
