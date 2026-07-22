@@ -29,6 +29,15 @@ _CAST_TARGETS: dict[str, pl.DataType] = {
 }
 
 
+def _format_problems(source: dict, problems: list) -> str:
+    where = source.get("path", "?")
+    sheet = source.get("sheet")
+    loc = f"{where} [{sheet}]" if sheet else where
+    lines = [f"{len(problems)} problem(s) in {loc}:"]
+    lines += [f"  {p.column}: {p.message}" for p in problems]
+    return "\n".join(lines)
+
+
 def _describe_event(ev: dict) -> str:
     kind = ev.get("event")
     if kind == "sparse_row_stripped":
@@ -208,6 +217,52 @@ class Table:
         )
         self.df.write_parquet(path, metadata={"xl2y": payload})
         return path
+
+    def conform(self, schema: Any, on_error: str = "raise") -> "Table":
+        """Cast columns to match ``schema`` then validate. By default raises a
+        single :class:`~xl2y.errors.SchemaError` carrying *every* problem.
+
+        ``on_error='quarantine'`` moves failing rows to ``table.rejects``;
+        ``on_error='report'`` keeps everything and fills ``table.errors``.
+        """
+        from xl2y.errors import SchemaError
+
+        if on_error not in ("raise", "quarantine", "report"):
+            raise ValueError(
+                "on_error must be 'raise', 'quarantine', or 'report', "
+                f"got {on_error!r}"
+            )
+
+        df, problems, bad = schema.conform(
+            self.df,
+            self.excel_rows,
+            dayfirst=self.source.get("dayfirst", True),
+        )
+        detail = {"problems": len(problems), "on_error": on_error}
+
+        if problems and on_error == "raise":
+            raise SchemaError(_format_problems(self.source, problems), problems)
+
+        if on_error == "quarantine" and bad:
+            bad_set = set(bad)
+            keep = [i for i in range(df.height) if i not in bad_set]
+            rejects = df[bad]
+            clean = df[keep]
+            excel_rows = (
+                [self.excel_rows[i] for i in keep]
+                if self.excel_rows is not None
+                else None
+            )
+            t = self._step("conform", clean, excel_rows, **detail)
+            object.__setattr__(t, "rejects", rejects)
+            object.__setattr__(t, "errors", problems)
+            return t
+
+        # raise-with-no-problems, or report mode: keep the full cast frame.
+        t = self._step("conform", df, self.excel_rows, **detail)
+        if problems:
+            object.__setattr__(t, "errors", problems)
+        return t
 
     def apply(self, fn: Callable[[pl.DataFrame], pl.DataFrame]) -> "Table":
         """Run an arbitrary ``df -> df`` callable as a pipeline step.

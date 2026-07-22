@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from xl2y import extract, reader
+from xl2y import extract, patterns, reader
 from xl2y.errors import (
     EmptySheetError,
     SchemaError,
@@ -16,6 +16,16 @@ from xl2y.errors import (
 )
 from xl2y.extract import Extracted
 from xl2y.reader import RawSheet
+from xl2y.schema import (
+    Schema,
+    bool_,
+    cat_,
+    date_,
+    datetime_,
+    float_,
+    int_,
+    str_,
+)
 from xl2y.table import Table, TableSet
 
 logger = logging.getLogger(__name__)
@@ -25,6 +35,15 @@ __all__ = [
     "load_all",
     "Table",
     "TableSet",
+    "Schema",
+    "str_",
+    "int_",
+    "float_",
+    "bool_",
+    "date_",
+    "datetime_",
+    "cat_",
+    "patterns",
     "Xl2yError",
     "UnsupportedFormatError",
     "EmptySheetError",
