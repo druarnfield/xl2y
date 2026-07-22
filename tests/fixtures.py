@@ -114,3 +114,15 @@ def typed_book(path: Path) -> Path:
     ws.append(["N/A", "-", "05/04/2025", 3, "-"])
     wb.save(path)
     return path
+
+
+def wide_years_book(path: Path) -> Path:
+    """A wide table with a year per column, begging to be unpivoted."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Wide"
+    ws.append(["Store", 2021, 2022, 2023])
+    ws.append(["Sydney", 10, 20, 30])
+    ws.append(["Melbourne", 40, 50, 60])
+    wb.save(path)
+    return path

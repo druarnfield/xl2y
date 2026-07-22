@@ -233,12 +233,12 @@ class Table:
             return self.clean()
         from xl2y.sink import run_tournament
 
-        best_ex, best_clean, entry = run_tournament(self._raw, self.source)
+        df, excel_rows, comments, entry = run_tournament(self._raw, self.source)
         return replace(
             self,
-            df=best_clean.df,
-            excel_rows=best_ex.excel_rows,
-            comments=best_ex.comments,
+            df=df,
+            excel_rows=excel_rows,
+            comments=comments,
             lineage=[*self.lineage, entry],
         )
 

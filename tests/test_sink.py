@@ -34,3 +34,11 @@ def test_kitchen_sink_without_raw_falls_back_to_clean():
 
     t = Table(df=pl.DataFrame({"A": ["1", "2"]}), source={})
     assert t.kitchen_sink().df["a"].dtype.is_numeric()  # degraded = clean()
+
+
+def test_kitchen_sink_unpivots_wide_years(tmp_path):
+    t = xl2y.load(fixtures.wide_years_book(tmp_path / "w.xlsx")).kitchen_sink()
+    assert t.df.columns == ["store", "period", "value"]
+    assert t.df.height == 6
+    assert set(t.df["period"].to_list()) == {"2021", "2022", "2023"}
+    assert t.lineage[-1]["winner"]["opts"] == {"unpivot": True}

@@ -12,6 +12,7 @@ the winner and all also-rans are recorded in lineage for ``dry_run``.
 from __future__ import annotations
 
 import logging
+import re
 
 import polars as pl
 
@@ -26,6 +27,50 @@ CANDIDATE_GRID = [
     for h in (1, 2, 3)
     for s in ("section", "keep")
 ]
+
+_MONTHS = {
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+    "nov", "dec", "january", "february", "march", "april", "june", "july",
+    "august", "september", "october", "november", "december",
+}
+_YEAR = re.compile(r"(?:19|20)\d{2}")
+_ISO = re.compile(r"\d{4}_\d{2}_\d{2}$")
+
+# A long-format (tidy) table is preferred over a wide period-per-column one.
+UNPIVOT_BONUS = 0.25
+
+
+def _looks_period(name: str) -> bool:
+    n = name.lower()
+    if _YEAR.search(n):
+        return True
+    if n.strip("_") in _MONTHS:
+        return True
+    return bool(_ISO.search(n))
+
+
+def _try_unpivot(df: pl.DataFrame) -> pl.DataFrame | None:
+    """If the table ends in a run of >=3 numeric, period-named columns
+    (2021, jan, 2025-01-01, ...), reshape it to long form; else None."""
+    period_cols: list[str] = []
+    for c in reversed(df.columns):
+        if df[c].dtype.is_numeric() and _looks_period(c):
+            period_cols.append(c)
+        else:
+            break
+    period_cols.reverse()
+    if len(period_cols) < 3:
+        return None
+    index = [c for c in df.columns if c not in period_cols]
+    if not index:  # need at least one identifier column to pivot around
+        return None
+    out = df.unpivot(
+        on=period_cols,
+        index=index,
+        variable_name="period",
+        value_name="value",
+    )
+    return out.with_columns(pl.col("period").str.replace(r"^col_", ""))
 
 
 def score(df: pl.DataFrame) -> float:
@@ -80,19 +125,49 @@ def run_tournament(raw: RawSheet, source: dict):
         }
         for s, o, _, c in results
     ]
+
+    winner = {
+        "df": best_clean.df,
+        "excel_rows": best_ex.excel_rows,
+        "comments": best_ex.comments,
+        "opts": best_opts,
+        "score": best_score,
+    }
+
+    # Extra candidate: a wide period-per-column table reshaped to long form.
+    unpiv = _try_unpivot(best_clean.df)
+    if unpiv is not None:
+        us = score(unpiv) + UNPIVOT_BONUS
+        candidates.append(
+            {
+                "opts": {"unpivot": True},
+                "score": round(us, 4),
+                "shape": (unpiv.height, unpiv.width),
+            }
+        )
+        if us > winner["score"]:
+            # unpivot multiplies rows, so Excel-row identity no longer maps.
+            winner = {
+                "df": unpiv,
+                "excel_rows": None,
+                "comments": [],
+                "opts": {"unpivot": True},
+                "score": us,
+            }
+
     entry = {
         "verb": "kitchen_sink",
         "candidates": candidates,
         "winner": {
-            "opts": best_opts,
-            "score": round(best_score, 4),
-            "shape": (best_clean.df.height, best_clean.df.width),
+            "opts": winner["opts"],
+            "score": round(winner["score"], 4),
+            "shape": (winner["df"].height, winner["df"].width),
         },
     }
     logger.info(
         "kitchen_sink: chose %s (score %.3f) from %d candidate(s).",
-        best_opts,
-        best_score,
-        len(results),
+        winner["opts"],
+        winner["score"],
+        len(candidates),
     )
-    return best_ex, best_clean, entry
+    return winner["df"], winner["excel_rows"], winner["comments"], entry
