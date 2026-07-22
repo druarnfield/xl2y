@@ -70,3 +70,15 @@ def test_clean_drops_fully_null_columns():
     t = Table(df=df, source={}).clean()
     assert t.df.columns == ["a"]
     assert t.lineage[-1]["dropped_columns"] == ["empty"]
+
+
+def test_dry_run_prints_and_returns_self(tmp_path, capsys):
+    import xl2y
+    from tests import fixtures
+
+    t = xl2y.load(fixtures.nasty_book(tmp_path / "n.xlsx")).clean()
+    t2 = t.dry_run()
+    out = capsys.readouterr().out
+    assert t2 is t
+    assert "3 rows" in out and "store" in out
+    assert "Northern Region" in out  # stripped rows are surfaced

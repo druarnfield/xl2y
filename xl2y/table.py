@@ -27,6 +27,23 @@ _CAST_TARGETS: dict[str, pl.DataType] = {
 }
 
 
+def _describe_event(ev: dict) -> str:
+    kind = ev.get("event")
+    if kind == "sparse_row_stripped":
+        return f"stripped sparse row {ev['excel_row']}: {ev['text']!r}"
+    if kind == "section_label":
+        return f"section label row {ev['excel_row']}: {ev['text']!r}"
+    if kind == "merged_comment":
+        return f"merged title row {ev['excel_row']}: {ev['text']!r}"
+    if kind == "hidden_skipped":
+        return f"skipped {ev['rows']} hidden row(s), {ev['cols']} hidden col(s)"
+    if kind == "columns_ignored":
+        return f"used columns {ev['used']}, ignored other block(s)"
+    if kind == "uncached_formulas":
+        return f"{ev['count']} uncached formula cell(s) read as null"
+    return str(ev)
+
+
 @dataclass(frozen=True)
 class Table:
     """Immutable pipeline state."""
@@ -58,6 +75,48 @@ class Table:
 
     def collect(self) -> pl.DataFrame:
         return self.df
+
+    def dry_run(self, n: int = 8) -> "Table":
+        """Print a summary of the current table and everything the pipeline
+        has done, then return ``self`` UNCHANGED. The only verb that prints;
+        drop it from the chain when you are done developing."""
+        src = self.source
+        print(
+            f"{src.get('path', '?')} [{src.get('sheet', '?')}] — "
+            f"{self.df.height} rows × {self.df.width} cols"
+        )
+        if self.df.width:
+            print(
+                "  dtypes: "
+                + ", ".join(
+                    f"{c}: {self.df[c].dtype}" for c in self.df.columns
+                )
+            )
+        print(self.df.head(n))
+        if self.lineage:
+            print("Pipeline:")
+            for entry in self.lineage:
+                print(f"  • {entry.get('verb', '?')}")
+                for ev in entry.get("events", []):
+                    print(f"      - {_describe_event(ev)}")
+                if entry.get("renames"):
+                    print(f"      - renamed {len(entry['renames'])} column(s)")
+                if entry.get("dropped_columns"):
+                    print(
+                        "      - dropped empty column(s): "
+                        f"{entry['dropped_columns']}"
+                    )
+                for co in entry.get("coercions", []):
+                    kind = co["event"].replace("coerced_", "")
+                    extra = f" ({co['failed']} failed)" if co.get("failed") else ""
+                    print(f"      - {co['column']} → {kind}{extra}")
+        if self.comments:
+            print("Comments/notes stripped:")
+            for c in self.comments:
+                print(
+                    f"  [{c['kind']} @ Excel row {c['excel_row']}] {c['text']}"
+                )
+        return self
 
     def clean(self) -> "Table":
         """The safe, deterministic tidy-up: snake_case headers, strip
