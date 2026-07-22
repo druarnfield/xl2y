@@ -1,17 +1,17 @@
 # xl2y
 
-**Messy Excel to Parquet. Sometimes it makes sense to throw the kitchen sink.**
+**Messy Excel to Parquet. Sometimes you have to throw the kitchen sink at it.**
 
-Spreadsheets are where clean data goes to get merged cells, a title banner,
-three header rows, a `Notes:` column nobody filled in, and — because someone
-once bolded cell A1048576 in 2014 — a "used range" of a million rows.
+Spreadsheets are where clean data goes to acquire merged cells, a title banner,
+three header rows, a `Notes:` column nobody ever filled in, and — because
+someone bolded cell A1048576 back in 2014 — a "used range" of a million rows.
 
-`xl2y` takes that, runs a cleaning pipeline you can actually re-run tomorrow,
-and hands you a Parquet file. One job. A handful of verbs. Simple when the file
-is simple, flexible when it's a crime scene.
+`xl2y` takes that file, runs a cleaning pipeline you can actually re-run
+tomorrow, and hands you Parquet. One job, a handful of verbs. Simple when the
+file is simple; flexible when it's a crime scene.
 
 ```bash
-uv add git+https://github.com/druarnfield/xl2y   # only needs polars + openpyxl
+uv add git+https://github.com/druarnfield/xl2y   # just polars + openpyxl
 ```
 
 ## Pick your energy
@@ -19,10 +19,10 @@ uv add git+https://github.com/druarnfield/xl2y   # only needs polars + openpyxl
 ```python
 import xl2y
 
-# Monday, 9am, someone emailed you "the numbers" and you have questions.
+# Monday, 9am. Someone has emailed you "the numbers". You have questions.
 xl2y.load("mystery.xlsx").kitchen_sink().to_parquet("out.parquet")
 
-# You know this file. You've been burned by this file before.
+# You know this file. This file has hurt you before.
 schema = xl2y.Schema(
     store=xl2y.str_(nullable=False),
     date=xl2y.date_(),
@@ -34,36 +34,38 @@ schema = xl2y.Schema(
     .to_parquet("q3.parquet"))
 ```
 
-`kitchen_sink()` tries a bunch of interpretations of a horrible sheet and keeps
-the one that looks most like a competent table — the "get it into something and
-stop thinking about it" button. `clean()` + `conform()` is for when you'd
-rather the file prove itself first.
+`kitchen_sink()` tries every interpretation of a horrible sheet it can think
+of and keeps the one that looks most like a competent table. It is the "get
+this into *something* and stop thinking about it" button. `clean()` +
+`conform()` is the other mood: the file proves itself before it gets anywhere
+near your pipeline.
 
-A pipeline is just Python, so "reproducible" means the boring, reliable thing:
-you run the script again. Every verb returns a new immutable `Table`, so a
-reusable pipeline is a plain function — `def pipe(t): return t.clean().conform(schema)`.
+Pipelines are plain Python, so "reproducible" means the boring, reliable
+thing: you run the script again. Every verb returns a new immutable `Table`,
+which makes a reusable pipeline just a function —
+`def pipe(t): return t.clean().conform(schema)`.
 
 ## The whole vocabulary
 
 | Verb | What it does |
 |---|---|
-| `xl2y.load(path, sheet=None, **hints)` | Load one table. No `sheet`? It picks the sheet with the biggest table and tells you which. |
-| `xl2y.load_all(path, **hints)` | Every sheet into a `TableSet`; the same chain runs on each. |
-| `.clean()` | snake_case the headers, trim whitespace, drop empty rows/cols, and quietly turn `"$1,234"`, `"15%"`, `"N/A"` and `03/04/2025` into things a computer respects. |
-| `.kitchen_sink()` | Throw everything at it: title banners, sparse section rows, multi-row headers, even unpivoting a wide year-per-column table. Keep the best-looking result. |
-| `.cast(col="int_", ...)` | For when the coercion guessed wrong and you know better. |
-| `.apply(fn)` | Escape hatch. Any `df -> df` callable is welcome here. |
+| `xl2y.load(path, sheet=None, **hints)` | Load one table. No `sheet`? It picks the sheet with the biggest table and tells you which one it chose. |
+| `xl2y.load_all(path, **hints)` | Every sheet into a `TableSet`; one chain, run on each. |
+| `.clean()` | snake_case the headers, trim the whitespace, drop the empty rows and columns, and quietly turn `"$1,234"`, `"15%"`, `"N/A"`, and `03/04/2025` into things a computer respects. |
+| `.kitchen_sink()` | Everything at once: title banners, sparse section rows, multi-row headers, even unpivoting a wide year-per-column table. Best-looking result wins. |
+| `.cast(col="int_", ...)` | For when the guessing guessed wrong and you know better. |
+| `.apply(fn)` | The escape hatch. Any `df -> df` callable is welcome here. |
 | `.conform(schema, on_error="raise")` | Cast to the schema, then validate. Raises by default; `"quarantine"` or `"report"` if you're feeling forgiving. |
-| `.dry_run()` | Prints what you've got and what the pipeline did, then hands the table straight back. Leave it mid-chain while you fiddle; delete it when you're happy. |
-| `.to_parquet(path)` / `.collect()` | Write Parquet (with a full audit trail baked into the metadata), or just give me the polars DataFrame. |
+| `.dry_run()` | Prints what you've got and what the pipeline did to it, then hands the table straight back. Leave it mid-chain while you fiddle; delete it when you're happy. |
+| `.to_parquet(path)` / `.collect()` | Write Parquet (full audit trail baked into the metadata), or just take the polars DataFrame and go. |
 
-## Schemas, for the trust-issues path
+## Schemas, for people with trust issues
 
 A small, no-nonsense schema: names, types, nullability, bounds, patterns,
-allowed values, and a `check=` hatch for anything weird. `conform` collects
-**every** problem and raises one error — and it points at the *original Excel
-row numbers*, because the person fixing the spreadsheet lives in Excel, not in
-your DataFrame.
+allowed values, and a `check=` hatch for anything weirder. `conform` collects
+**every** problem before raising a single error — and the error points at the
+*original Excel row numbers*, because the person who has to fix the
+spreadsheet lives in Excel, not in your DataFrame.
 
 ```python
 from xl2y import patterns
@@ -90,22 +92,24 @@ SchemaError: 3 problem(s) in 'report.xlsx' [Q3]:
 ```
 
 Type constructors all wear a trailing underscore — `str_`, `int_`, `float_`,
-`bool_`, `date_`, `datetime_`, `cat_` — for the crime of consistency.
+`bool_`, `date_`, `datetime_`, `cat_`. `str` was taken; the rest wear one out
+of solidarity.
 
 `patterns` ships the usual suspects (`EMAIL`, `URL`, `UUID`, `IPV4`,
 `PHONE_AU`, `PHONE_E164`, `POSTCODE_AU`, `BSB`, `DATE_ISO`, `CURRENCY`),
 proper checksum validators for `abn_valid` / `acn_valid` / `tfn_valid`, and
-little builders (`any_of`, `exact`, `digits`, `one_of`) so nobody has to
-handwrite an email regex ever again.
+small builders (`any_of`, `exact`, `digits`, `one_of`) so that nobody,
+anywhere, ever handwrites an email regex again.
 
 ## Why it doesn't fall over on a big ugly file
 
-`xl2y` refuses to believe a workbook's declared dimensions — one stray bit of
-formatting and Excel will happily claim a million rows. A streaming XML pass
-finds the *real* extent (plus the merges, hidden rows, and uncached formulas),
-then values stream straight into polars columns. `load_all` handles one sheet
-at a time, so peak memory is your biggest sheet, not the whole workbook. That
-"million-row" file loads in a couple of seconds and a couple of megabytes.
+`xl2y` does not believe a workbook's declared dimensions, because one stray
+bit of formatting is all it takes for Excel to claim a million rows. A
+streaming XML pass finds the *real* extent (plus the merges, hidden rows, and
+uncached formulas), then values stream straight into polars columns.
+`load_all` works one sheet at a time, so peak memory is your biggest sheet,
+not the whole workbook. The "million-row" file loads in a couple of seconds
+and a couple of megabytes.
 
 Supported: `.xlsx` / `.xlsm` / `.xltx` / `.xltm`. Not supported: `.xls` /
 `.xlsb`, which get a polite "please convert this first" instead of a stack
@@ -113,6 +117,6 @@ trace.
 
 ## For the curious
 
-Design and implementation notes live in `docs/plans/`. The original
-pandas prototype that seeded all the extraction heuristics is frozen at
-`reference/excel_loader.py`. `CLAUDE.md` has the architecture tour.
+Design and implementation notes live in `docs/plans/`. The original pandas
+prototype that seeded the extraction heuristics is frozen at
+`reference/excel_loader.py`, and `CLAUDE.md` has the architecture tour.
