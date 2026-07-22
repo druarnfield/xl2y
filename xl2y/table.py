@@ -12,6 +12,9 @@ from typing import Any, Callable
 
 import polars as pl
 
+from xl2y.coerce import coerce_columns
+from xl2y.util import snake_case, unique_name
+
 # String aliases accepted by cast() and mapped to polars dtypes. The schema
 # module's ColumnType objects reuse these same names via their .kind.
 _CAST_TARGETS: dict[str, pl.DataType] = {
@@ -55,6 +58,73 @@ class Table:
 
     def collect(self) -> pl.DataFrame:
         return self.df
+
+    def clean(self) -> "Table":
+        """The safe, deterministic tidy-up: snake_case headers, strip
+        whitespace, drop fully-empty rows/columns, then coerce text columns
+        (NA tokens, tolerant numerics, dates)."""
+        df = self.df
+        detail: dict[str, Any] = {}
+
+        # 1. snake_case + dedupe column names.
+        taken: set[str] = set()
+        mapping: dict[str, str] = {}
+        renames: dict[str, str] = {}
+        for c in df.columns:
+            new = unique_name(snake_case(str(c)), taken)
+            taken.add(new)
+            mapping[c] = new
+            if new != c:
+                renames[c] = new
+        df = df.rename(mapping)
+        if renames:
+            detail["renames"] = renames
+
+        # 2. Strip whitespace on text columns; "" -> null.
+        str_cols = [c for c in df.columns if df[c].dtype == pl.Utf8]
+        if str_cols:
+            df = df.with_columns(
+                [
+                    pl.when(pl.col(c).str.strip_chars().str.len_chars() == 0)
+                    .then(None)
+                    .otherwise(pl.col(c).str.strip_chars())
+                    .alias(c)
+                    for c in str_cols
+                ]
+            )
+
+        # 3a. Drop fully-null rows, keeping excel_rows in sync.
+        excel_rows = self.excel_rows
+        if df.height and df.width:
+            keep = df.select(
+                pl.any_horizontal(pl.all().is_not_null()).alias("_k")
+            )["_k"]
+            if not bool(keep.all()):
+                if excel_rows is not None:
+                    excel_rows = [
+                        er for er, k in zip(excel_rows, keep.to_list()) if k
+                    ]
+                df = df.filter(keep)
+
+        # 3b. Drop fully-null columns.
+        if df.height:
+            null_cols = [
+                c for c in df.columns if df[c].null_count() == df.height
+            ]
+            if null_cols:
+                df = df.drop(null_cols)
+                detail["dropped_columns"] = null_cols
+
+        # 4. Coerce text columns.
+        df, events = coerce_columns(
+            df,
+            dayfirst=self.source.get("dayfirst", True),
+            sheet=self.source.get("sheet", "?"),
+        )
+        if events:
+            detail["coercions"] = events
+
+        return self._step("clean", df, excel_rows, **detail)
 
     def apply(self, fn: Callable[[pl.DataFrame], pl.DataFrame]) -> "Table":
         """Run an arbitrary ``df -> df`` callable as a pipeline step.

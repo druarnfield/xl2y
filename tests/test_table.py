@@ -42,3 +42,31 @@ def test_cast():
 def test_cast_unknown_column_raises():
     with pytest.raises(ValueError, match="nope"):
         _table().cast(nope="int_")
+
+
+def test_clean_snake_cases_and_coerces(tmp_path):
+    import xl2y
+    from tests import fixtures
+
+    t = xl2y.load(fixtures.typed_book(tmp_path / "t.xlsx")).clean()
+    assert t.df.columns == ["money", "pct", "when", "count", "note"]
+    assert t.df["money"].to_list() == [1234.5, -500.0, None]
+    assert t.df["pct"].to_list() == [0.15, 0.075, None]
+    assert str(t.df["when"].dtype) == "Date"
+    assert t.lineage[-1]["verb"] == "clean"
+
+
+def test_clean_snake_case_collision_dedupes():
+    df = pl.DataFrame({"Total Rev": [1], "total_rev": [2]})
+    t = Table(df=df, source={}).clean()
+    assert t.df.columns == ["total_rev", "total_rev_2"]
+
+
+def test_clean_drops_fully_null_columns():
+    df = pl.DataFrame(
+        {"a": [1, 2], "empty": [None, None]},
+        schema={"a": pl.Int64, "empty": pl.Utf8},
+    )
+    t = Table(df=df, source={}).clean()
+    assert t.df.columns == ["a"]
+    assert t.lineage[-1]["dropped_columns"] == ["empty"]
