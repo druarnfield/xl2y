@@ -79,6 +79,56 @@ def test_merged_banner_kept_inside_multi_row_header(tmp_path):
     assert ex.df.columns[0] == "FY25/26 Tracker Region"
 
 
+def test_header_min_fill_skips_partial_row_above_header(tmp_path):
+    # A 3/5-filled metadata row sits above the real, fully-filled header.
+    # By default the sparse row is mistaken for the header; header_min_fill
+    # skips it (recording it) and anchors on the real header below.
+    from openpyxl import Workbook
+
+    p = tmp_path / "fill.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "All Data"
+    ws.append(["Report", None, "v2", None, "2026"])  # 1: 60% filled junk
+    ws.append(["Region", "Q1", "Q2", "Q3", "Q4"])  # 2: real header
+    ws.append(["Alpha", 1, 2, 3, 4])  # 3: data
+    ws.append(["Beta", 5, 6, 7, 8])  # 4: data
+    wb.save(p)
+    raw = reader.read_sheet(p, "All Data")
+
+    # Default: the partial row wins (the pre-existing behaviour / the bug).
+    default = extract.extract_table(raw)
+    assert default.df.columns[0] == "Report"
+    assert default.excel_rows == [2, 3, 4]
+
+    # With a threshold the partial row is skipped as a pre-header note.
+    ex = extract.extract_table(raw, header_min_fill=0.75)
+    assert ex.df.columns == ["Region", "Q1", "Q2", "Q3", "Q4"]
+    assert ex.excel_rows == [3, 4]
+    assert [c["kind"] for c in ex.comments] == ["pre_header"]
+    assert ex.comments[0]["excel_row"] == 1
+
+
+def test_header_min_fill_allows_sparse_stacked_subheader(tmp_path):
+    # Only the FIRST header row is fill-tested; a sparse stacked sub-header
+    # below it must still be accepted as part of a multi-row header.
+    ex = _extracted(
+        tmp_path,
+        fixtures.multi_header_book,
+        "Wide",
+        header_rows=2,
+        header_min_fill=0.6,
+    )
+    assert ex.df.columns == ["Store", "Revenue Q1", "Revenue Q2"]
+
+
+def test_header_min_fill_out_of_range(tmp_path):
+    p = fixtures.simple_book(tmp_path / "s.xlsx")
+    raw = reader.read_sheet(p, "Data")
+    with pytest.raises(ValueError, match="header_min_fill"):
+        extract.extract_table(raw, header_min_fill=1.5)
+
+
 def test_hidden_skipped_when_asked(tmp_path):
     ex = _extracted(
         tmp_path, fixtures.hidden_book, "Hidden", skip_hidden=True

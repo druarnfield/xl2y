@@ -49,6 +49,11 @@ def _describe_event(ev: dict) -> str:
         return f"section label row {ev['excel_row']}: {ev['text']!r}"
     if kind == "merged_comment":
         return f"merged title row {ev['excel_row']}: {ev['text']!r}"
+    if kind == "pre_header_skipped":
+        return (
+            f"skipped pre-header row {ev['excel_row']} "
+            f"({ev['filled']}/{ev['width']} filled): {ev['text']!r}"
+        )
     if kind == "hidden_skipped":
         return f"skipped {ev['rows']} hidden row(s), {ev['cols']} hidden col(s)"
     if kind == "columns_ignored":

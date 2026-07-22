@@ -152,7 +152,22 @@ def extract_table(
     sparse_rows: Literal["comment", "keep", "section"] = "comment",
     skip_hidden: bool = False,
     check_formula_cache: bool = True,
+    header_min_fill: float = 0.0,
 ) -> Extracted:
+    """Shape a :class:`RawSheet` grid into a table.
+
+    ``header_min_fill`` is the fraction (0..1) of a row's own cells that must
+    hold a value for that row to anchor the header. Rows above the header that
+    fall short — a stray label or metadata line — are skipped as pre-header
+    notes rather than mistaken for the header. ``0.0`` (the default) keeps the
+    previous behaviour: the first non-empty, non-title row anchors the header.
+    Only the *first* header row is tested; stacked sub-header rows below it may
+    be as sparse as the data needs.
+    """
+    if not 0.0 <= header_min_fill <= 1.0:
+        raise ValueError(
+            f"header_min_fill must be between 0 and 1, got {header_min_fill!r}"
+        )
     title = raw.name
     # Work on a copy: merge propagation below fills and pads cells, and
     # kitchen_sink re-extracts the same RawSheet under different options.
@@ -354,6 +369,39 @@ def extract_table(
         if not non_null:
             continue
 
+        # Skip partly-filled rows sitting above the real header. A genuine
+        # header labels (most of) its columns; a stray label/metadata line
+        # above it does not. Own content only, so a value carried in by a
+        # merge can't pad a sparse row up to threshold. Applies before the
+        # header is found — stacked sub-header rows below it stay exempt.
+        if (
+            len(header) == 0
+            and header_min_fill > 0
+            and len(own_non_null) < header_min_fill * width
+        ):
+            text = row_text(r, values)
+            logger.info(
+                "Sheet %r: skipping row %d above the header "
+                "(%d of %d cell(s) filled, below the %.0f%% threshold).",
+                title,
+                r + 1,
+                len(own_non_null),
+                width,
+                header_min_fill * 100,
+            )
+            if text:
+                raw_comments.append((r + 1, text, "pre_header"))
+            events.append(
+                {
+                    "event": "pre_header_skipped",
+                    "excel_row": r + 1,
+                    "text": text,
+                    "filled": len(own_non_null),
+                    "width": width,
+                }
+            )
+            continue
+
         if (
             sparse_rows in ("comment", "section")
             and len(header) >= header_rows
@@ -402,9 +450,14 @@ def extract_table(
             body_rows.append((r + 1, values, current_section))
 
     if len(header) < header_rows:
+        hint = (
+            f" (header_min_fill={header_min_fill} may be too high)"
+            if header_min_fill > 0
+            else ""
+        )
         raise ValueError(
             f"Sheet {title!r}: requested header_rows={header_rows} but only "
-            f"{len(header)} non-comment row(s) available."
+            f"{len(header)} non-comment row(s) available{hint}."
         )
 
     uncached = sum(
