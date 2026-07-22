@@ -118,11 +118,18 @@ def _build_series(name: str, values: list[Any]) -> pl.Series:
         if types <= {int}:
             return pl.Series(name, values, dtype=pl.Int64)
         if types <= {int, float}:
-            return pl.Series(
+            # An integer column with a stray decimal-formatted cell arrives as
+            # an int/float mix; match pandas convert_dtypes and keep it Int64
+            # when every value is whole.
+            s = pl.Series(
                 name,
                 [float(v) if v is not None else None for v in values],
                 dtype=pl.Float64,
             )
+            nn = s.drop_nulls()
+            if nn.len() and bool(((nn % 1) == 0).all()):
+                return s.cast(pl.Int64)
+            return s
         if types == {str}:
             return pl.Series(name, values, dtype=pl.Utf8)
         if types <= {_dt.datetime, _dt.date, _dt.time}:
@@ -147,7 +154,9 @@ def extract_table(
     check_formula_cache: bool = True,
 ) -> Extracted:
     title = raw.name
-    grid = raw.grid
+    # Work on a copy: merge propagation below fills and pads cells, and
+    # kitchen_sink re-extracts the same RawSheet under different options.
+    grid = [list(row) for row in raw.grid]
     merged_ranges = raw.merged
     if not grid:
         raise EmptySheetError(f"Sheet {title!r} is empty")
